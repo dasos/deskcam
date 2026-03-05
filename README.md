@@ -1,12 +1,13 @@
 # deskcam
 
 Simple fullscreen webcam image viewer for Raspberry Pi framebuffer (no desktop environment required).
+Uses `fbi` for display output, which works reliably from SSH + `systemd`.
 
 ## Install
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-pygame
+sudo apt install -y python3 python3-pip fbi
 cd /home/pi/deskcam
 python3 -m pip install -r requirements.txt
 ```
@@ -20,7 +21,7 @@ python3 cam_display.py "http://YOUR_CAMERA/image.jpg"
 Useful options:
 
 - `--interval 300` poll every 5 minutes (default)
-- `--transition 1.2` crossfade duration in seconds
+- `--transition` kept for compatibility; ignored by `fbi` backend
 - `--timeout 10` HTTP timeout in seconds
 
 Example:
@@ -73,8 +74,8 @@ journalctl -u deskcam.service -f
 
 Notes:
 
-- The unit uses `SDL_VIDEODRIVER=kmsdrm` and binds to `tty1`, which is more reliable than starting from an SSH shell.
-- If video initialization still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
+- The unit binds to `tty1` and displays with `fbi` on `/dev/fb0`.
+- If video output still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
 
 ## Troubleshooting (SSH-only)
 
@@ -97,4 +98,5 @@ If device permissions are wrong, verify:
 ```bash
 id pi
 ls -l /dev/dri /dev/dri/card0 /dev/dri/renderD128
+ls -l /dev/fb0
 ```

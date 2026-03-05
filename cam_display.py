@@ -4,21 +4,19 @@
 - Downloads a single image URL over HTTP(S)
 - Polls at a configurable interval
 - Updates display only when image bytes change
-- Uses smooth crossfade between images
+- Displays via `fbi` for robust framebuffer output on SSH-only setups
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional
 
-import pygame
 import requests
 
 
@@ -50,8 +48,8 @@ def parse_args() -> Config:
     parser.add_argument(
         "--transition",
         type=float,
-        default=1.2,
-        help="Crossfade duration in seconds (default: 1.2)",
+        default=0.0,
+        help="Unused with fbi backend; kept for CLI compatibility",
     )
 
     args = parser.parse_args()
@@ -70,26 +68,10 @@ def parse_args() -> Config:
     )
 
 
-def configure_sdl_for_pi() -> None:
-    # Keep cursor/input handling simple for kiosk-style display.
-    os.environ.setdefault("SDL_NOMOUSE", "1")
-    if os.path.exists("/dev/fb0"):
-        os.environ.setdefault("SDL_FBDEV", "/dev/fb0")
-
-
-def _candidate_video_drivers() -> list[Optional[str]]:
-    forced = os.environ.get("SDL_VIDEODRIVER")
-    if forced:
-        return [forced]
-
-    candidates: list[Optional[str]] = []
-    if os.path.exists("/dev/dri/card0"):
-        candidates.append("kmsdrm")
-    if os.path.exists("/dev/fb0"):
-        candidates.append("fbcon")
-    # Final fallback: let SDL auto-select any compiled backend.
-    candidates.append(None)
-    return candidates
+def ensure_fbi_available() -> None:
+    result = subprocess.run(["which", "fbi"], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError("fbi not found. Install with: sudo apt install -y fbi")
 
 
 def fetch_image_bytes(session: requests.Session, cfg: Config) -> bytes:
@@ -98,196 +80,83 @@ def fetch_image_bytes(session: requests.Session, cfg: Config) -> bytes:
     return response.content
 
 
-def to_fitted_surface(raw: bytes, screen_size: tuple[int, int]) -> pygame.Surface:
-    loaded = pygame.image.load(io.BytesIO(raw))
-    source = loaded.convert()
-
-    sw, sh = source.get_size()
-    tw, th = screen_size
-
-    scale = min(tw / sw, th / sh)
-    nw = max(1, int(sw * scale))
-    nh = max(1, int(sh * scale))
-
-    # Prefer the basic scaler on KMS for maximum compatibility.
-    scaled = pygame.transform.scale(source, (nw, nh))
-
-    frame = pygame.Surface((tw, th)).convert()
-    frame.fill((0, 0, 0))
-    x = (tw - nw) // 2
-    y = (th - nh) // 2
-    frame.blit(scaled, (x, y))
-    return frame
+def write_image(path: str, raw: bytes) -> None:
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "wb") as fh:
+        fh.write(raw)
+    os.replace(tmp_path, path)
 
 
-def _looks_black(surface: pygame.Surface) -> bool:
-    w, h = surface.get_size()
-    if w <= 0 or h <= 0:
-        return True
-    sample_points = [
-        (w // 2, h // 2),
-        (w // 4, h // 4),
-        (3 * w // 4, h // 4),
-        (w // 4, 3 * h // 4),
-        (3 * w // 4, 3 * h // 4),
+def display_with_fbi(path: str) -> None:
+    # Ensure only one fbi process from this service remains active.
+    subprocess.run(
+        ["pkill", "-x", "fbi"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+    cmd = [
+        "fbi",
+        "-T",
+        "1",
+        "-d",
+        "/dev/fb0",
+        "-a",
+        "--noverbose",
+        "-1",
+        "-t",
+        "1",
+        path,
     ]
-    for x, y in sample_points:
-        r, g, b, *_ = surface.get_at((max(0, min(w - 1, x)), max(0, min(h - 1, y))))
-        if r > 8 or g > 8 or b > 8:
-            return False
-    return True
-
-
-def _sample_luminance(surface: pygame.Surface) -> int:
-    w, h = surface.get_size()
-    if w <= 0 or h <= 0:
-        return 0
-    points = [
-        (w // 2, h // 2),
-        (w // 4, h // 4),
-        (3 * w // 4, h // 4),
-        (w // 4, 3 * h // 4),
-        (3 * w // 4, 3 * h // 4),
-    ]
-    total = 0
-    for x, y in points:
-        r, g, b, *_ = surface.get_at((max(0, min(w - 1, x)), max(0, min(h - 1, y))))
-        total += (int(r) + int(g) + int(b)) // 3
-    return total // len(points)
-
-
-def draw_fullscreen(screen: pygame.Surface, frame: pygame.Surface) -> None:
-    screen.blit(frame, (0, 0))
-    pygame.display.flip()
-
-
-def crossfade(
-    screen: pygame.Surface,
-    old_frame: pygame.Surface,
-    new_frame: pygame.Surface,
-    seconds: float,
-) -> None:
-    if seconds <= 0:
-        draw_fullscreen(screen, new_frame)
-        return
-
-    clock = pygame.time.Clock()
-    start = time.monotonic()
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                raise KeyboardInterrupt
-        elapsed = time.monotonic() - start
-        progress = min(1.0, elapsed / seconds)
-
-        old_alpha = int(255 * (1.0 - progress))
-        new_alpha = int(255 * progress)
-
-        old_layer = old_frame.copy()
-        new_layer = new_frame.copy()
-        old_layer.set_alpha(old_alpha)
-        new_layer.set_alpha(new_alpha)
-
-        screen.fill((0, 0, 0))
-        screen.blit(old_layer, (0, 0))
-        screen.blit(new_layer, (0, 0))
-        pygame.display.flip()
-
-        if progress >= 1.0:
-            break
-        clock.tick(60)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise RuntimeError(stderr or f"fbi exited with code {result.returncode}")
 
 
 def run(cfg: Config) -> int:
-    configure_sdl_for_pi()
+    ensure_fbi_available()
 
-    pygame.init()
+    if cfg.transition_seconds > 0:
+        print("Note: --transition is ignored by the fbi backend")
 
-    screen: Optional[pygame.Surface] = None
-    display_errors: list[str] = []
-    for video_driver in _candidate_video_drivers():
-        if video_driver is None:
-            os.environ.pop("SDL_VIDEODRIVER", None)
-            driver_label = "auto"
-        else:
-            os.environ["SDL_VIDEODRIVER"] = video_driver
-            driver_label = video_driver
-
-        try:
-            pygame.display.quit()
-            pygame.display.init()
-            # Prefer hardware-backed fullscreen on KMS; software mode can render black.
-            screen = pygame.display.set_mode(
-                (0, 0), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF
-            )
-            print(f"Using SDL_VIDEODRIVER={driver_label}")
-            print(f"Pygame display driver: {pygame.display.get_driver()}")
-            break
-        except pygame.error as exc:
-            display_errors.append(f"{driver_label}: {exc}")
-
-    if screen is None:
-        print(
-            "Failed to open fullscreen display. Tried: " + " | ".join(display_errors),
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        pygame.mouse.set_visible(False)
-    except pygame.error as exc:
-        print(f"Warning: could not hide mouse cursor: {exc}", file=sys.stderr)
-
-    screen_size = screen.get_size()
-    print(f"Display size: {screen_size[0]}x{screen_size[1]}")
+    image_dir = "/tmp/deskcam"
+    image_path = os.path.join(image_dir, "current.img")
+    os.makedirs(image_dir, exist_ok=True)
 
     session = requests.Session()
-    last_hash: Optional[str] = None
-    current_frame: Optional[pygame.Surface] = None
+    last_hash: str | None = None
 
     try:
         while True:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return 0
-
             try:
                 raw = fetch_image_bytes(session, cfg)
                 image_hash = hashlib.sha256(raw).hexdigest()
 
                 if image_hash != last_hash:
-                    next_frame = to_fitted_surface(raw, screen_size)
-                    print(
-                        f"Frame diagnostics: black={_looks_black(next_frame)} luminance={_sample_luminance(next_frame)}"
-                    )
-                    if current_frame is None:
-                        draw_fullscreen(screen, next_frame)
+                    write_image(image_path, raw)
+                    display_with_fbi(image_path)
+                    if last_hash is None:
                         print("Initial image displayed")
                     else:
-                        crossfade(screen, current_frame, next_frame, cfg.transition_seconds)
                         print("Image changed, display updated")
-                    current_frame = next_frame
                     last_hash = image_hash
                 else:
                     print("No image change")
-            except Exception as exc:  # Keep the loop running on transient errors.
-                print(f"Fetch/decode error: {exc}", file=sys.stderr)
+            except Exception as exc:
+                print(f"Fetch/display error: {exc}", file=sys.stderr)
 
             sleep_until = time.monotonic() + cfg.interval_seconds
             while True:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        return 0
                 remaining = sleep_until - time.monotonic()
                 if remaining <= 0:
                     break
                 time.sleep(min(0.25, remaining))
-
     except KeyboardInterrupt:
         return 0
     finally:
         session.close()
-        pygame.quit()
 
 
 def main() -> int:

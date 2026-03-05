@@ -10,9 +10,6 @@ User=pi
 Group=pi
 SupplementaryGroups=video render input
 WorkingDirectory=/home/pi/deskcam
-Environment=SDL_VIDEODRIVER=kmsdrm
-Environment=SDL_AUDIODRIVER=dummy
-Environment=SDL_NOMOUSE=1
 Environment=PYTHONUNBUFFERED=1
 TTYPath=/dev/tty1
 TTYReset=yes
