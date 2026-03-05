@@ -1,0 +1,24 @@
+[Unit]
+Description=DeskCam Fullscreen Viewer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+SupplementaryGroups=video render input
+WorkingDirectory=/home/pi/deskcam
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=SDL_AUDIODRIVER=dummy
+Environment=SDL_NOMOUSE=1
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/python3 /home/pi/deskcam/cam_display.py "http://YOUR_CAMERA/image.jpg" --interval 300 --transition 1.2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

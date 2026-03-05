@@ -29,46 +29,48 @@ Example:
 python3 cam_display.py "http://192.168.1.20/snapshot.jpg" --interval 300 --transition 1.5
 ```
 
-## Autostart (systemd)
+## Autostart (systemd, SSH-friendly)
 
-1. Create `/etc/systemd/system/deskcam.service`:
+This repo includes a unit file template at `systemd/deskcam.service`.
 
-```ini
-[Unit]
-Description=DeskCam Fullscreen Viewer
-After=network-online.target
-Wants=network-online.target
+1. Copy and edit the service file:
 
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/deskcam
-ExecStart=/usr/bin/python3 /home/pi/deskcam/cam_display.py "http://YOUR_CAMERA/image.jpg" --interval 300 --transition 1.2
-Restart=always
-RestartSec=5
-Environment=SDL_VIDEODRIVER=fbcon
-Environment=SDL_FBDEV=/dev/fb0
-Environment=SDL_NOMOUSE=1
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp /home/pi/deskcam/systemd/deskcam.service /etc/systemd/system/deskcam.service
+sudo nano /etc/systemd/system/deskcam.service
 ```
 
-2. Reload systemd and enable on boot:
+Update these fields:
+
+- `User`, `Group`, `WorkingDirectory`
+- `ExecStart` camera URL and options
+
+2. Ensure the service user has required device access:
+
+```bash
+sudo usermod -aG video,render,input pi
+```
+
+3. Reload systemd and enable on boot:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now deskcam.service
 ```
 
-3. Check status:
+4. Check status:
 
 ```bash
 systemctl status deskcam.service
 ```
 
-4. Follow logs:
+5. Follow logs:
 
 ```bash
 journalctl -u deskcam.service -f
 ```
+
+Notes:
+
+- The unit uses `SDL_VIDEODRIVER=kmsdrm` and binds to `tty1`, which is more reliable than starting from an SSH shell.
+- If video initialization still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
