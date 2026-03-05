@@ -151,13 +151,16 @@ def run(cfg: Config) -> int:
     configure_sdl_for_pi()
 
     pygame.init()
-    pygame.mouse.set_visible(False)
 
     try:
         screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     except pygame.error as exc:
         print(f"Failed to open fullscreen display: {exc}", file=sys.stderr)
         return 2
+    try:
+        pygame.mouse.set_visible(False)
+    except pygame.error as exc:
+        print(f"Warning: could not hide mouse cursor: {exc}", file=sys.stderr)
 
     screen_size = screen.get_size()
     print(f"Display size: {screen_size[0]}x{screen_size[1]}")
