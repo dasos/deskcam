@@ -55,6 +55,7 @@ sudo usermod -aG video,render,input pi
 
 ```bash
 sudo systemctl daemon-reload
+sudo systemctl disable --now getty@tty1.service
 sudo systemctl enable --now deskcam.service
 ```
 
@@ -74,3 +75,26 @@ Notes:
 
 - The unit uses `SDL_VIDEODRIVER=kmsdrm` and binds to `tty1`, which is more reliable than starting from an SSH shell.
 - If video initialization still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
+
+## Troubleshooting (SSH-only)
+
+If the HDMI still shows a login prompt on `tty1`:
+
+```bash
+sudo systemctl disable --now getty@tty1.service
+sudo systemctl restart deskcam.service
+```
+
+If logs appear empty, check with:
+
+```bash
+journalctl -u deskcam.service -b --no-pager -n 200
+systemctl status deskcam.service
+```
+
+If device permissions are wrong, verify:
+
+```bash
+id pi
+ls -l /dev/dri /dev/dri/card0 /dev/dri/renderD128
+```

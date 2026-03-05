@@ -2,6 +2,7 @@
 Description=DeskCam Fullscreen Viewer
 After=network-online.target
 Wants=network-online.target
+Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
@@ -12,11 +13,15 @@ WorkingDirectory=/home/pi/deskcam
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=SDL_AUDIODRIVER=dummy
 Environment=SDL_NOMOUSE=1
+Environment=PYTHONUNBUFFERED=1
 TTYPath=/dev/tty1
-StandardInput=tty
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-force
 StandardOutput=journal
 StandardError=journal
-ExecStart=/usr/bin/python3 /home/pi/deskcam/cam_display.py "http://YOUR_CAMERA/image.jpg" --interval 300 --transition 1.2
+ExecStart=/usr/bin/python3 -u /home/pi/deskcam/cam_display.py "http://YOUR_CAMERA/image.jpg" --interval 300 --transition 1.2
 Restart=always
 RestartSec=5
 
