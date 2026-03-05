@@ -217,8 +217,12 @@ def run(cfg: Config) -> int:
         try:
             pygame.display.quit()
             pygame.display.init()
-            screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            # Prefer hardware-backed fullscreen on KMS; software mode can render black.
+            screen = pygame.display.set_mode(
+                (0, 0), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF
+            )
             print(f"Using SDL_VIDEODRIVER={driver_label}")
+            print(f"Pygame display driver: {pygame.display.get_driver()}")
             break
         except pygame.error as exc:
             display_errors.append(f"{driver_label}: {exc}")
