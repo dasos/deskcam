@@ -109,11 +109,8 @@ def to_fitted_surface(raw: bytes, screen_size: tuple[int, int]) -> pygame.Surfac
     nw = max(1, int(sw * scale))
     nh = max(1, int(sh * scale))
 
-    scaled = pygame.transform.smoothscale(source, (nw, nh))
-    # Some SDL/Pygame builds on KMS can produce black output from smoothscale.
-    # If the source has content but the scaled frame looks black, fall back.
-    if _looks_black(scaled) and not _looks_black(source):
-        scaled = pygame.transform.scale(source, (nw, nh))
+    # Prefer the basic scaler on KMS for maximum compatibility.
+    scaled = pygame.transform.scale(source, (nw, nh))
 
     frame = pygame.Surface((tw, th)).convert()
     frame.fill((0, 0, 0))
@@ -139,6 +136,24 @@ def _looks_black(surface: pygame.Surface) -> bool:
         if r > 8 or g > 8 or b > 8:
             return False
     return True
+
+
+def _sample_luminance(surface: pygame.Surface) -> int:
+    w, h = surface.get_size()
+    if w <= 0 or h <= 0:
+        return 0
+    points = [
+        (w // 2, h // 2),
+        (w // 4, h // 4),
+        (3 * w // 4, h // 4),
+        (w // 4, 3 * h // 4),
+        (3 * w // 4, 3 * h // 4),
+    ]
+    total = 0
+    for x, y in points:
+        r, g, b, *_ = surface.get_at((max(0, min(w - 1, x)), max(0, min(h - 1, y))))
+        total += (int(r) + int(g) + int(b)) // 3
+    return total // len(points)
 
 
 def draw_fullscreen(screen: pygame.Surface, frame: pygame.Surface) -> None:
@@ -238,6 +253,9 @@ def run(cfg: Config) -> int:
 
                 if image_hash != last_hash:
                     next_frame = to_fitted_surface(raw, screen_size)
+                    print(
+                        f"Frame diagnostics: black={_looks_black(next_frame)} luminance={_sample_luminance(next_frame)}"
+                    )
                     if current_frame is None:
                         draw_fullscreen(screen, next_frame)
                         print("Initial image displayed")
