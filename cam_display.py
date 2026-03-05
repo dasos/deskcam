@@ -71,10 +71,25 @@ def parse_args() -> Config:
 
 
 def configure_sdl_for_pi() -> None:
-    # Use Linux framebuffer directly when no desktop/window manager exists.
-    os.environ.setdefault("SDL_VIDEODRIVER", "fbcon")
-    os.environ.setdefault("SDL_FBDEV", "/dev/fb0")
+    # Keep cursor/input handling simple for kiosk-style display.
     os.environ.setdefault("SDL_NOMOUSE", "1")
+    if os.path.exists("/dev/fb0"):
+        os.environ.setdefault("SDL_FBDEV", "/dev/fb0")
+
+
+def _candidate_video_drivers() -> list[Optional[str]]:
+    forced = os.environ.get("SDL_VIDEODRIVER")
+    if forced:
+        return [forced]
+
+    candidates: list[Optional[str]] = []
+    if os.path.exists("/dev/dri/card0"):
+        candidates.append("kmsdrm")
+    if os.path.exists("/dev/fb0"):
+        candidates.append("fbcon")
+    # Final fallback: let SDL auto-select any compiled backend.
+    candidates.append(None)
+    return candidates
 
 
 def fetch_image_bytes(session: requests.Session, cfg: Config) -> bytes:
@@ -152,10 +167,30 @@ def run(cfg: Config) -> int:
 
     pygame.init()
 
-    try:
-        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    except pygame.error as exc:
-        print(f"Failed to open fullscreen display: {exc}", file=sys.stderr)
+    screen: Optional[pygame.Surface] = None
+    display_errors: list[str] = []
+    for video_driver in _candidate_video_drivers():
+        if video_driver is None:
+            os.environ.pop("SDL_VIDEODRIVER", None)
+            driver_label = "auto"
+        else:
+            os.environ["SDL_VIDEODRIVER"] = video_driver
+            driver_label = video_driver
+
+        try:
+            pygame.display.quit()
+            pygame.display.init()
+            screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            print(f"Using SDL_VIDEODRIVER={driver_label}")
+            break
+        except pygame.error as exc:
+            display_errors.append(f"{driver_label}: {exc}")
+
+    if screen is None:
+        print(
+            "Failed to open fullscreen display. Tried: " + " | ".join(display_errors),
+            file=sys.stderr,
+        )
         return 2
     try:
         pygame.mouse.set_visible(False)
