@@ -21,13 +21,12 @@ python3 cam_display.py "http://YOUR_CAMERA/image.jpg"
 Useful options:
 
 - `--interval 300` poll every 5 minutes (default)
-- `--transition` kept for compatibility; ignored by `fbi` backend
 - `--timeout 10` HTTP timeout in seconds
 
 Example:
 
 ```bash
-python3 cam_display.py "http://192.168.1.20/snapshot.jpg" --interval 300 --transition 1.5
+python3 cam_display.py "http://192.168.1.20/snapshot.jpg" --interval 300
 ```
 
 ## Autostart (systemd, SSH-friendly)

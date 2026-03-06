@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -25,7 +26,6 @@ class Config:
     url: str
     interval_seconds: int
     timeout_seconds: float
-    transition_seconds: float
 
 
 def parse_args() -> Config:
@@ -45,32 +45,22 @@ def parse_args() -> Config:
         default=10.0,
         help="HTTP request timeout in seconds (default: 10)",
     )
-    parser.add_argument(
-        "--transition",
-        type=float,
-        default=0.0,
-        help="Unused with fbi backend; kept for CLI compatibility",
-    )
 
     args = parser.parse_args()
     if args.interval < 5:
         parser.error("--interval must be at least 5 seconds")
     if args.timeout <= 0:
         parser.error("--timeout must be greater than 0")
-    if args.transition < 0:
-        parser.error("--transition cannot be negative")
 
     return Config(
         url=args.url,
         interval_seconds=args.interval,
         timeout_seconds=args.timeout,
-        transition_seconds=args.transition,
     )
 
 
 def ensure_fbi_available() -> None:
-    result = subprocess.run(["which", "fbi"], capture_output=True, text=True, check=False)
-    if result.returncode != 0:
+    if shutil.which("fbi") is None:
         raise RuntimeError("fbi not found. Install with: sudo apt install -y fbi")
 
 
@@ -123,9 +113,6 @@ def stop_fbi(proc: subprocess.Popen[str] | None) -> None:
 
 def run(cfg: Config) -> int:
     ensure_fbi_available()
-
-    if cfg.transition_seconds > 0:
-        print("Note: --transition is ignored by the fbi backend")
 
     image_dir = "/tmp/deskcam"
     image_path = os.path.join(image_dir, "current.img")
