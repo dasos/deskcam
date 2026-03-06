@@ -87,34 +87,38 @@ def write_image(path: str, raw: bytes) -> None:
     os.replace(tmp_path, path)
 
 
-def display_with_fbi(path: str) -> None:
-    # Ensure only one fbi process from this service remains active.
-    subprocess.run(
-        ["pkill", "-x", "fbi"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-
+def start_fbi(path: str) -> subprocess.Popen[str]:
     cmd = [
         "fbi",
         "-d",
         "/dev/fb0",
         "-a",
         "--noverbose",
-        "-1",
-        "-t",
-        "1",
         path,
     ]
     # Optional VT selection: set DESKCAM_FBI_TTY=1 if explicit VT switching is needed.
     tty = os.environ.get("DESKCAM_FBI_TTY", "").strip()
     if tty:
         cmd[1:1] = ["-T", tty]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        raise RuntimeError(stderr or f"fbi exited with code {result.returncode}")
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def stop_fbi(proc: subprocess.Popen[str] | None) -> None:
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2)
 
 
 def run(cfg: Config) -> int:
@@ -129,6 +133,7 @@ def run(cfg: Config) -> int:
 
     session = requests.Session()
     last_hash: str | None = None
+    fbi_proc: subprocess.Popen[str] | None = None
 
     try:
         while True:
@@ -138,7 +143,12 @@ def run(cfg: Config) -> int:
 
                 if image_hash != last_hash:
                     write_image(image_path, raw)
-                    display_with_fbi(image_path)
+                    stop_fbi(fbi_proc)
+                    fbi_proc = start_fbi(image_path)
+                    time.sleep(0.2)
+                    if fbi_proc.poll() is not None:
+                        err = (fbi_proc.stderr.read() if fbi_proc.stderr else "").strip()
+                        raise RuntimeError(err or "fbi exited immediately")
                     if last_hash is None:
                         print("Initial image displayed")
                     else:
@@ -158,6 +168,7 @@ def run(cfg: Config) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        stop_fbi(fbi_proc)
         session.close()
 
 
