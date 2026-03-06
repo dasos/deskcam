@@ -98,8 +98,6 @@ def display_with_fbi(path: str) -> None:
 
     cmd = [
         "fbi",
-        "-T",
-        "1",
         "-d",
         "/dev/fb0",
         "-a",
@@ -109,6 +107,10 @@ def display_with_fbi(path: str) -> None:
         "1",
         path,
     ]
+    # Optional VT selection: set DESKCAM_FBI_TTY=1 if explicit VT switching is needed.
+    tty = os.environ.get("DESKCAM_FBI_TTY", "").strip()
+    if tty:
+        cmd[1:1] = ["-T", tty]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         stderr = result.stderr.strip()

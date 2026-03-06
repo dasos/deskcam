@@ -75,6 +75,7 @@ journalctl -u deskcam.service -f
 Notes:
 
 - The unit binds to `tty1` and displays with `fbi` on `/dev/fb0`.
+- `fbi` VT switching is not forced by default. If needed, set `DESKCAM_FBI_TTY=1` in the service environment.
 - If video output still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
 
 ## Troubleshooting (SSH-only)
