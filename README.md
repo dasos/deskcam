@@ -1,4 +1,5 @@
 # deskcam
+![Static Badge](https://img.shields.io/badge/vibe-coded-orange?logo=github&logoColor=white) ![Static Badge](https://img.shields.io/badge/Coded_with-Codex-blue?logo=openai&logoColor=white)
 
 Simple fullscreen webcam image viewer for Raspberry Pi framebuffer (no desktop environment required).
 Uses `fbi` for display output, which works reliably from SSH + `systemd`.
