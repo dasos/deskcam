@@ -22,22 +22,11 @@ Useful options:
 
 - `--interval 300` poll every 5 minutes (default)
 - `--timeout 10` HTTP timeout in seconds
-- `--backend auto|fbi|fb` display backend selection (default `auto`)
-- `--transition none|fade` transition mode (default `none`)
-- `--transition-ms 500` fade duration in milliseconds
-- `--transition-fps 20` fade frame rate
 
 Example:
 
 ```bash
 python3 cam_display.py "http://192.168.1.20/snapshot.jpg" --interval 300
-```
-
-Fade transition example (no SDL/pygame):
-
-```bash
-python3 cam_display.py "http://192.168.1.20/snapshot.jpg" \
-  --transition fade --transition-ms 500 --transition-fps 20
 ```
 
 ## Autostart (systemd, SSH-friendly)
@@ -85,8 +74,6 @@ journalctl -u deskcam.service -f
 Notes:
 
 - The unit binds to `tty1` and displays with `fbi` on `/dev/fb0`.
-- Transition mode `fade` uses direct framebuffer rendering (`fb` backend). `fbi` only supports cut updates.
-- With `--backend auto`, `fade` attempts `fb` first and falls back to `fbi` if unavailable.
 - `fbi` VT switching is not forced by default. If needed, set `DESKCAM_FBI_TTY=1` in the service environment.
 - If video output still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
 
