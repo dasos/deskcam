@@ -13,21 +13,88 @@ cd /home/pi/deskcam
 python3 -m pip install -r requirements.txt
 ```
 
+## Configuration
+
+The app now supports two source backends:
+
+- `http`: fetch either a fixed image URL or the newest file in a WebDAV directory
+- `s3`: fetch either a fixed object key or the newest object under a prefix
+
+Configuration can come from CLI flags, environment variables, or an env file.
+
+For local/manual runs, a repo-local `.env` file is fine and is already ignored by git.
+For the Raspberry Pi `systemd` service, prefer a root-owned env file outside the repo such as `/etc/deskcam.env` so secrets do not live in the unit file or command line.
+
+Copy the example file and edit it:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Important environment variables:
+
+- `DESKCAM_SOURCE=http|s3`
+- `DESKCAM_INTERVAL=300`
+- `DESKCAM_TIMEOUT=10`
+- `DESKCAM_HTTP_SELECTION=single|latest`
+- `DESKCAM_HTTP_URL=...` when `single`
+- `DESKCAM_HTTP_DIRECTORY_URL=...` when `latest`
+- `DESKCAM_S3_BUCKET=...`
+- `DESKCAM_S3_SELECTION=single|latest`
+- `DESKCAM_S3_KEY=...` when `single`
+- `DESKCAM_S3_PREFIX=...` when `latest`
+- `AWS_ACCESS_KEY_ID=...`
+- `AWS_SECRET_ACCESS_KEY=...`
+- `AWS_SESSION_TOKEN=...` optional
+- `DESKCAM_S3_REGION=...` optional but usually useful
+- `DESKCAM_S3_ENDPOINT_URL=...` optional for S3-compatible providers
+
 ## Run
+
+HTTP / WebDAV single file, legacy style:
 
 ```bash
 python3 cam_display.py "http://YOUR_CAMERA/image.jpg"
 ```
 
-Useful options:
-
-- `--interval 300` poll every 5 minutes (default)
-- `--timeout 10` HTTP timeout in seconds
-
-Example:
+HTTP / WebDAV from env:
 
 ```bash
-python3 cam_display.py "http://192.168.1.20/snapshot.jpg" --interval 300
+DESKCAM_SOURCE=http DESKCAM_HTTP_URL="http://YOUR_CAMERA/image.jpg" python3 cam_display.py
+```
+
+WebDAV newest file in a directory:
+
+```bash
+DESKCAM_SOURCE=http \
+DESKCAM_HTTP_SELECTION=latest \
+DESKCAM_HTTP_DIRECTORY_URL="https://webdav.example.com/camera/" \
+python3 cam_display.py
+```
+
+S3 fixed object:
+
+```bash
+DESKCAM_SOURCE=s3 \
+DESKCAM_S3_BUCKET=your-bucket \
+DESKCAM_S3_SELECTION=single \
+DESKCAM_S3_KEY=cameras/lobby/current.jpg \
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY \
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY \
+python3 cam_display.py
+```
+
+S3 newest file under a prefix:
+
+```bash
+DESKCAM_SOURCE=s3 \
+DESKCAM_S3_BUCKET=your-bucket \
+DESKCAM_S3_SELECTION=latest \
+DESKCAM_S3_PREFIX=cameras/lobby/ \
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY \
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY \
+python3 cam_display.py
 ```
 
 ## Autostart (systemd, SSH-friendly)
@@ -38,13 +105,61 @@ This repo includes a unit file template at `systemd/deskcam.service`.
 
 ```bash
 sudo cp /home/pi/deskcam/systemd/deskcam.service /etc/systemd/system/deskcam.service
+sudo cp /home/pi/deskcam/.env.example /etc/deskcam.env
+sudo chmod 600 /etc/deskcam.env
+sudo chown root:root /etc/deskcam.env
 sudo nano /etc/systemd/system/deskcam.service
+sudo nano /etc/deskcam.env
 ```
 
 Update these fields:
 
 - `User`, `Group`, `WorkingDirectory`
-- `ExecStart` camera URL and options
+- `/etc/deskcam.env` source settings and credentials
+
+Example `/etc/deskcam.env` for HTTP / WebDAV:
+
+```bash
+DESKCAM_SOURCE=http
+DESKCAM_HTTP_SELECTION=single
+DESKCAM_HTTP_URL=http://192.168.1.20/snapshot.jpg
+DESKCAM_INTERVAL=300
+DESKCAM_TIMEOUT=10
+```
+
+Example `/etc/deskcam.env` for newest file in a WebDAV directory:
+
+```bash
+DESKCAM_SOURCE=http
+DESKCAM_HTTP_SELECTION=latest
+DESKCAM_HTTP_DIRECTORY_URL=https://webdav.example.com/camera/
+DESKCAM_INTERVAL=300
+DESKCAM_TIMEOUT=10
+```
+
+Example `/etc/deskcam.env` for S3 fixed key:
+
+```bash
+DESKCAM_SOURCE=s3
+DESKCAM_S3_BUCKET=your-bucket
+DESKCAM_S3_REGION=us-east-1
+DESKCAM_S3_SELECTION=single
+DESKCAM_S3_KEY=cameras/lobby/current.jpg
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
+```
+
+Example `/etc/deskcam.env` for newest object under a prefix:
+
+```bash
+DESKCAM_SOURCE=s3
+DESKCAM_S3_BUCKET=your-bucket
+DESKCAM_S3_REGION=us-east-1
+DESKCAM_S3_SELECTION=latest
+DESKCAM_S3_PREFIX=cameras/lobby/
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
+```
 
 2. Ensure the service user has required device access:
 
@@ -76,6 +191,8 @@ Notes:
 
 - The unit binds to `tty1` and displays with `fbi` on `/dev/fb0`.
 - `fbi` VT switching is not forced by default. If needed, set `DESKCAM_FBI_TTY=1` in the service environment.
+- WebDAV latest-directory mode uses `PROPFIND Depth: 1` and picks the newest non-directory item by `getlastmodified`.
+- S3 bucket name, key, prefix, and credentials should go in the env file, not in `ExecStart`.
 - If video output still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
 
 ## Troubleshooting (SSH-only)
