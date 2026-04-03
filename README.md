@@ -17,8 +17,8 @@ python3 -m pip install -r requirements.txt
 
 The app now supports two source backends:
 
-- `http`: fetch either a fixed image URL or the newest file in a WebDAV directory
-- `s3`: fetch either a fixed object key or the newest object under a prefix
+- `http`: fetch either a fixed image URL or the newest `.jpg`/`.jpeg` file in a WebDAV directory
+- `s3`: fetch either a fixed object key or the newest `.jpg`/`.jpeg` object under a prefix
 
 Configuration can come from CLI flags, environment variables, or an env file.
 
@@ -43,7 +43,7 @@ Important environment variables:
 - `DESKCAM_S3_BUCKET=...`
 - `DESKCAM_S3_SELECTION=single|latest`
 - `DESKCAM_S3_KEY=...` when `single`
-- `DESKCAM_S3_PREFIX=...` when `latest`
+- `DESKCAM_S3_PREFIX=...` when `latest`; set it to an empty value for bucket root
 - `AWS_ACCESS_KEY_ID=...`
 - `AWS_SECRET_ACCESS_KEY=...`
 - `AWS_SESSION_TOKEN=...` optional
@@ -92,6 +92,18 @@ DESKCAM_SOURCE=s3 \
 DESKCAM_S3_BUCKET=your-bucket \
 DESKCAM_S3_SELECTION=latest \
 DESKCAM_S3_PREFIX=cameras/lobby/ \
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY \
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY \
+python3 cam_display.py
+```
+
+S3 newest JPG/JPEG from bucket root:
+
+```bash
+DESKCAM_SOURCE=s3 \
+DESKCAM_S3_BUCKET=your-bucket \
+DESKCAM_S3_SELECTION=latest \
+DESKCAM_S3_PREFIX= \
 AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY \
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY \
 python3 cam_display.py
@@ -161,6 +173,18 @@ AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
 ```
 
+Example `/etc/deskcam.env` for newest JPG/JPEG object from bucket root:
+
+```bash
+DESKCAM_SOURCE=s3
+DESKCAM_S3_BUCKET=your-bucket
+DESKCAM_S3_REGION=us-east-1
+DESKCAM_S3_SELECTION=latest
+DESKCAM_S3_PREFIX=
+AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
+```
+
 2. Ensure the service user has required device access:
 
 ```bash
@@ -191,7 +215,8 @@ Notes:
 
 - The unit binds to `tty1` and displays with `fbi` on `/dev/fb0`.
 - `fbi` VT switching is not forced by default. If needed, set `DESKCAM_FBI_TTY=1` in the service environment.
-- WebDAV latest-directory mode uses `PROPFIND Depth: 1` and picks the newest non-directory item by `getlastmodified`.
+- WebDAV latest-directory mode uses `PROPFIND Depth: 1` and picks the newest non-directory `.jpg` or `.jpeg` item by `getlastmodified`.
+- S3 latest mode only considers `.jpg` and `.jpeg` objects and can search bucket root with `DESKCAM_S3_PREFIX=`.
 - S3 bucket name, key, prefix, and credentials should go in the env file, not in `ExecStart`.
 - If video output still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
 

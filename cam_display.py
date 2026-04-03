@@ -55,6 +55,13 @@ def env_value(name: str) -> str | None:
     return value or None
 
 
+def env_value_allow_empty(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return value.strip()
+
+
 def env_int(name: str, default: int) -> int:
     value = env_value(name)
     if value is None:
@@ -185,7 +192,7 @@ def parse_args() -> Config:
     )
     parser.add_argument(
         "--s3-prefix",
-        default=env_value("DESKCAM_S3_PREFIX"),
+        default=env_value_allow_empty("DESKCAM_S3_PREFIX"),
         help="Object prefix when --s3-selection=latest (env: DESKCAM_S3_PREFIX)",
     )
 
@@ -223,7 +230,7 @@ def parse_args() -> Config:
             parser.error("S3 source requires --s3-bucket or DESKCAM_S3_BUCKET")
         if args.s3_selection == "single" and not args.s3_key:
             parser.error("S3 single-object mode requires --s3-key or DESKCAM_S3_KEY")
-        if args.s3_selection == "latest" and not args.s3_prefix:
+        if args.s3_selection == "latest" and args.s3_prefix is None:
             parser.error("S3 latest-object mode requires --s3-prefix or DESKCAM_S3_PREFIX")
 
     return Config(
@@ -257,6 +264,11 @@ def normalize_url_for_compare(url: str) -> str:
     parts = urlsplit(url)
     path = parts.path.rstrip("/") or "/"
     return f"{parts.scheme}://{parts.netloc}{path}"
+
+
+def is_jpeg_path(path: str) -> bool:
+    lower_path = path.lower()
+    return lower_path.endswith(".jpg") or lower_path.endswith(".jpeg")
 
 
 def find_latest_http_url(session: requests.Session, cfg: Config) -> str:
@@ -297,6 +309,8 @@ def find_latest_http_url(session: requests.Session, cfg: Config) -> str:
         normalized_file_url = normalize_url_for_compare(file_url)
         if normalized_file_url == directory_url:
             continue
+        if not is_jpeg_path(file_url):
+            continue
 
         prop = entry.find("d:propstat/d:prop", namespace)
         if prop is None:
@@ -322,7 +336,7 @@ def find_latest_http_url(session: requests.Session, cfg: Config) -> str:
 
     if latest_entry is None:
         raise RuntimeError(
-            f"No files found in WebDAV directory {cfg.http_directory_url}"
+            f"No JPG/JPEG files found in WebDAV directory {cfg.http_directory_url}"
         )
     return latest_entry[1]
 
@@ -364,12 +378,14 @@ def find_latest_s3_key(s3_client, cfg: Config) -> str:
             key = obj["Key"]
             if key.endswith("/"):
                 continue
+            if not is_jpeg_path(key):
+                continue
             if latest_obj is None or obj["LastModified"] > latest_obj["LastModified"]:
                 latest_obj = obj
 
     if latest_obj is None:
         raise RuntimeError(
-            f"No objects found in s3://{cfg.s3_bucket}/{cfg.s3_prefix}"
+            f"No JPG/JPEG objects found in s3://{cfg.s3_bucket}/{cfg.s3_prefix or ''}"
         )
     return latest_obj["Key"]
 
