@@ -3,6 +3,7 @@
 
 - Downloads a single image URL over HTTP(S)
 - Downloads an object from S3-compatible storage
+- Downloads an image from an FTPS server
 - Polls at a configurable interval
 - Updates display only when image bytes change
 - Displays via `fbi` for robust framebuffer output on SSH-only setups
@@ -17,35 +18,18 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
-from email.utils import parsedate_to_datetime
-from urllib.parse import urljoin, urlsplit
-from xml.etree import ElementTree
 
 import requests
 
-
-@dataclass
-class Config:
-    source_type: str
-    interval_seconds: int
-    timeout_seconds: float
-    http_selection: str
-    http_url: str | None
-    http_directory_url: str | None
-    s3_bucket: str | None
-    s3_region: str | None
-    s3_endpoint_url: str | None
-    s3_selection: str
-    s3_key: str | None
-    s3_prefix: str | None
+import source_ftps
+import source_http
+import source_s3
+from models import Config
 
 
-@dataclass
-class FetchedImage:
-    content: bytes
-    source_label: str
-
+# ---------------------------------------------------------------------------
+# Environment helpers
+# ---------------------------------------------------------------------------
 
 def env_value(name: str) -> str | None:
     value = os.environ.get(name)
@@ -105,6 +89,10 @@ def load_env_file(path: str) -> None:
             os.environ.setdefault(key, value)
 
 
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
 def parse_args() -> Config:
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument(
@@ -132,7 +120,7 @@ def parse_args() -> Config:
     )
     parser.add_argument(
         "--source",
-        choices=("http", "s3"),
+        choices=("http", "s3", "ftps"),
         default=None,
         help="Image source backend (env: DESKCAM_SOURCE)",
     )
@@ -195,6 +183,43 @@ def parse_args() -> Config:
         default=env_value_allow_empty("DESKCAM_S3_PREFIX"),
         help="Object prefix when --s3-selection=latest (env: DESKCAM_S3_PREFIX)",
     )
+    parser.add_argument(
+        "--ftps-host",
+        default=env_value("DESKCAM_FTPS_HOST"),
+        help="FTPS server hostname (env: DESKCAM_FTPS_HOST)",
+    )
+    parser.add_argument(
+        "--ftps-port",
+        type=int,
+        default=env_int("DESKCAM_FTPS_PORT", 21),
+        help="FTPS server port (default: 21, env: DESKCAM_FTPS_PORT)",
+    )
+    parser.add_argument(
+        "--ftps-username",
+        default=env_value("DESKCAM_FTPS_USERNAME"),
+        help="FTPS username (env: DESKCAM_FTPS_USERNAME)",
+    )
+    parser.add_argument(
+        "--ftps-password",
+        default=env_value("DESKCAM_FTPS_PASSWORD"),
+        help="FTPS password (env: DESKCAM_FTPS_PASSWORD)",
+    )
+    parser.add_argument(
+        "--ftps-selection",
+        choices=("single", "latest"),
+        default=env_value("DESKCAM_FTPS_SELECTION") or "single",
+        help="Use a fixed file or the newest JPEG in a directory (env: DESKCAM_FTPS_SELECTION)",
+    )
+    parser.add_argument(
+        "--ftps-path",
+        default=env_value("DESKCAM_FTPS_PATH"),
+        help="Exact file path when --ftps-selection=single (env: DESKCAM_FTPS_PATH)",
+    )
+    parser.add_argument(
+        "--ftps-directory",
+        default=env_value("DESKCAM_FTPS_DIRECTORY"),
+        help="Directory path when --ftps-selection=latest (env: DESKCAM_FTPS_DIRECTORY)",
+    )
 
     args = parser.parse_args(remaining)
     if args.interval < 5:
@@ -208,6 +233,8 @@ def parse_args() -> Config:
             source_type = "http"
         elif args.s3_bucket:
             source_type = "s3"
+        elif args.ftps_host:
+            source_type = "ftps"
         else:
             source_type = "http"
 
@@ -232,6 +259,17 @@ def parse_args() -> Config:
             parser.error("S3 single-object mode requires --s3-key or DESKCAM_S3_KEY")
         if args.s3_selection == "latest" and args.s3_prefix is None:
             parser.error("S3 latest-object mode requires --s3-prefix or DESKCAM_S3_PREFIX")
+    elif source_type == "ftps":
+        if not args.ftps_host:
+            parser.error("FTPS source requires --ftps-host or DESKCAM_FTPS_HOST")
+        if not args.ftps_username:
+            parser.error("FTPS source requires --ftps-username or DESKCAM_FTPS_USERNAME")
+        if not args.ftps_password:
+            parser.error("FTPS source requires --ftps-password or DESKCAM_FTPS_PASSWORD")
+        if args.ftps_selection == "single" and not args.ftps_path:
+            parser.error("FTPS single-file mode requires --ftps-path or DESKCAM_FTPS_PATH")
+        if args.ftps_selection == "latest" and not args.ftps_directory:
+            parser.error("FTPS latest-file mode requires --ftps-directory or DESKCAM_FTPS_DIRECTORY")
 
     return Config(
         source_type=source_type,
@@ -246,172 +284,23 @@ def parse_args() -> Config:
         s3_selection=args.s3_selection,
         s3_key=args.s3_key,
         s3_prefix=args.s3_prefix,
+        ftps_host=args.ftps_host,
+        ftps_port=args.ftps_port,
+        ftps_username=args.ftps_username,
+        ftps_password=args.ftps_password,
+        ftps_selection=args.ftps_selection,
+        ftps_path=args.ftps_path,
+        ftps_directory=args.ftps_directory,
     )
 
+
+# ---------------------------------------------------------------------------
+# Display (fbi)
+# ---------------------------------------------------------------------------
 
 def ensure_fbi_available() -> None:
     if shutil.which("fbi") is None:
         raise RuntimeError("fbi not found. Install with: sudo apt install -y fbi")
-
-
-def fetch_http_single_image(session: requests.Session, cfg: Config) -> FetchedImage:
-    response = session.get(cfg.http_url, timeout=cfg.timeout_seconds)
-    response.raise_for_status()
-    return FetchedImage(content=response.content, source_label=cfg.http_url)
-
-
-def normalize_url_for_compare(url: str) -> str:
-    parts = urlsplit(url)
-    path = parts.path.rstrip("/") or "/"
-    return f"{parts.scheme}://{parts.netloc}{path}"
-
-
-def is_jpeg_path(path: str) -> bool:
-    lower_path = path.lower()
-    return lower_path.endswith(".jpg") or lower_path.endswith(".jpeg")
-
-
-def find_latest_http_url(session: requests.Session, cfg: Config) -> str:
-    body = """<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:">
-  <d:prop>
-    <d:getlastmodified />
-    <d:resourcetype />
-  </d:prop>
-</d:propfind>
-"""
-    response = session.request(
-        "PROPFIND",
-        cfg.http_directory_url,
-        data=body,
-        headers={"Depth": "1", "Content-Type": "application/xml"},
-        timeout=cfg.timeout_seconds,
-    )
-    response.raise_for_status()
-
-    try:
-        root = ElementTree.fromstring(response.content)
-    except ElementTree.ParseError as exc:
-        raise RuntimeError(
-            f"Failed to parse WebDAV directory listing from {cfg.http_directory_url}"
-        ) from exc
-
-    namespace = {"d": "DAV:"}
-    directory_url = normalize_url_for_compare(cfg.http_directory_url)
-    latest_entry: tuple[object, str] | None = None
-
-    for entry in root.findall("d:response", namespace):
-        href = entry.findtext("d:href", namespaces=namespace)
-        if not href:
-            continue
-
-        file_url = urljoin(cfg.http_directory_url, href)
-        normalized_file_url = normalize_url_for_compare(file_url)
-        if normalized_file_url == directory_url:
-            continue
-        if not is_jpeg_path(file_url):
-            continue
-
-        prop = entry.find("d:propstat/d:prop", namespace)
-        if prop is None:
-            continue
-
-        resource_type = prop.find("d:resourcetype", namespace)
-        if resource_type is not None and resource_type.find("d:collection", namespace) is not None:
-            continue
-
-        last_modified = prop.findtext("d:getlastmodified", namespaces=namespace)
-        if not last_modified:
-            continue
-
-        try:
-            modified_at = parsedate_to_datetime(last_modified)
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(
-                f"Invalid getlastmodified value for {file_url}: {last_modified}"
-            ) from exc
-
-        if latest_entry is None or modified_at > latest_entry[0]:
-            latest_entry = (modified_at, file_url)
-
-    if latest_entry is None:
-        raise RuntimeError(
-            f"No JPG/JPEG files found in WebDAV directory {cfg.http_directory_url}"
-        )
-    return latest_entry[1]
-
-
-def fetch_http_latest_image(session: requests.Session, cfg: Config) -> FetchedImage:
-    latest_url = find_latest_http_url(session, cfg)
-    response = session.get(latest_url, timeout=cfg.timeout_seconds)
-    response.raise_for_status()
-    return FetchedImage(content=response.content, source_label=latest_url)
-
-
-def fetch_http_image(session: requests.Session, cfg: Config) -> FetchedImage:
-    if cfg.http_selection == "latest":
-        return fetch_http_latest_image(session, cfg)
-    return fetch_http_single_image(session, cfg)
-
-
-def create_s3_client(cfg: Config):
-    try:
-        import boto3
-    except ImportError as exc:
-        raise RuntimeError(
-            "boto3 is not installed. Install dependencies with: python3 -m pip install -r requirements.txt"
-        ) from exc
-
-    kwargs = {}
-    if cfg.s3_region:
-        kwargs["region_name"] = cfg.s3_region
-    if cfg.s3_endpoint_url:
-        kwargs["endpoint_url"] = cfg.s3_endpoint_url
-    return boto3.client("s3", **kwargs)
-
-
-def find_latest_s3_key(s3_client, cfg: Config) -> str:
-    latest_obj = None
-    paginator = s3_client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=cfg.s3_bucket, Prefix=cfg.s3_prefix):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            if key.endswith("/"):
-                continue
-            if not is_jpeg_path(key):
-                continue
-            if latest_obj is None or obj["LastModified"] > latest_obj["LastModified"]:
-                latest_obj = obj
-
-    if latest_obj is None:
-        raise RuntimeError(
-            f"No JPG/JPEG objects found in s3://{cfg.s3_bucket}/{cfg.s3_prefix or ''}"
-        )
-    return latest_obj["Key"]
-
-
-def fetch_s3_image(s3_client, cfg: Config) -> FetchedImage:
-    key = cfg.s3_key
-    if cfg.s3_selection == "latest":
-        key = find_latest_s3_key(s3_client, cfg)
-
-    response = s3_client.get_object(Bucket=cfg.s3_bucket, Key=key)
-    body = response["Body"]
-    try:
-        return FetchedImage(
-            content=body.read(),
-            source_label=f"s3://{cfg.s3_bucket}/{key}",
-        )
-    finally:
-        body.close()
-
-
-def fetch_image(session: requests.Session | None, s3_client, cfg: Config) -> FetchedImage:
-    if cfg.source_type == "http":
-        if session is None:
-            raise RuntimeError("HTTP session is not initialized")
-        return fetch_http_image(session, cfg)
-    return fetch_s3_image(s3_client, cfg)
 
 
 def write_image(path: str, raw: bytes) -> None:
@@ -422,30 +311,15 @@ def write_image(path: str, raw: bytes) -> None:
 
 
 def start_fbi(path: str) -> subprocess.Popen[str]:
-    cmd = [
-        "fbi",
-        "-d",
-        "/dev/fb0",
-        "-a",
-        "--noverbose",
-        path,
-    ]
-    # Optional VT selection: set DESKCAM_FBI_TTY=1 if explicit VT switching is needed.
+    cmd = ["fbi", "-d", "/dev/fb0", "-a", "--noverbose", path]
     tty = os.environ.get("DESKCAM_FBI_TTY", "").strip()
     if tty:
         cmd[1:1] = ["-T", tty]
-    return subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
 
 def stop_fbi(proc: subprocess.Popen[str] | None) -> None:
-    if proc is None:
-        return
-    if proc.poll() is not None:
+    if proc is None or proc.poll() is not None:
         return
     proc.terminate()
     try:
@@ -455,6 +329,10 @@ def stop_fbi(proc: subprocess.Popen[str] | None) -> None:
         proc.wait(timeout=2)
 
 
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
 def run(cfg: Config) -> int:
     ensure_fbi_available()
 
@@ -463,14 +341,20 @@ def run(cfg: Config) -> int:
     os.makedirs(image_dir, exist_ok=True)
 
     session = requests.Session() if cfg.source_type == "http" else None
-    s3_client = create_s3_client(cfg) if cfg.source_type == "s3" else None
+    s3_client = source_s3.create_client(cfg) if cfg.source_type == "s3" else None
     last_hash: str | None = None
     fbi_proc: subprocess.Popen[str] | None = None
 
     try:
         while True:
             try:
-                fetched = fetch_image(session, s3_client, cfg)
+                if cfg.source_type == "http":
+                    fetched = source_http.fetch(session, cfg)
+                elif cfg.source_type == "s3":
+                    fetched = source_s3.fetch(s3_client, cfg)
+                else:
+                    fetched = source_ftps.fetch(cfg)
+
                 image_hash = hashlib.sha256(fetched.content).hexdigest()
 
                 if image_hash != last_hash:

@@ -15,10 +15,11 @@ python3 -m pip install -r requirements.txt
 
 ## Configuration
 
-The app now supports two source backends:
+Three source backends are supported:
 
 - `http`: fetch either a fixed image URL or the newest `.jpg`/`.jpeg` file in a WebDAV directory
 - `s3`: fetch either a fixed object key or the newest `.jpg`/`.jpeg` object under a prefix
+- `ftps`: fetch either a fixed file or the newest `.jpg`/`.jpeg` file in a directory (explicit TLS on port 21); single-file mode skips the download when the file has not changed
 
 Configuration can come from CLI flags, environment variables, or an env file.
 
@@ -32,23 +33,47 @@ cp .env.example .env
 nano .env
 ```
 
-Important environment variables:
+### Common
 
-- `DESKCAM_SOURCE=http|s3`
-- `DESKCAM_INTERVAL=300`
-- `DESKCAM_TIMEOUT=10`
-- `DESKCAM_HTTP_SELECTION=single|latest`
-- `DESKCAM_HTTP_URL=...` when `single`
-- `DESKCAM_HTTP_DIRECTORY_URL=...` when `latest`
-- `DESKCAM_S3_BUCKET=...`
-- `DESKCAM_S3_SELECTION=single|latest`
-- `DESKCAM_S3_KEY=...` when `single`
-- `DESKCAM_S3_PREFIX=...` when `latest`; set it to an empty value for bucket root
-- `AWS_ACCESS_KEY_ID=...`
-- `AWS_SECRET_ACCESS_KEY=...`
-- `AWS_SESSION_TOKEN=...` optional
-- `DESKCAM_S3_REGION=...` optional but usually useful
-- `DESKCAM_S3_ENDPOINT_URL=...` optional for S3-compatible providers
+| Variable | Default | Description |
+|---|---|---|
+| `DESKCAM_SOURCE` | auto-detected | `http`, `s3`, or `ftps` |
+| `DESKCAM_INTERVAL` | `300` | Poll interval in seconds (minimum 5) |
+| `DESKCAM_TIMEOUT` | `10` | HTTP/S3 request timeout in seconds |
+
+### HTTP / WebDAV
+
+| Variable | Description |
+|---|---|
+| `DESKCAM_HTTP_SELECTION` | `single` (default) or `latest` |
+| `DESKCAM_HTTP_URL` | Image URL when `single` |
+| `DESKCAM_HTTP_DIRECTORY_URL` | WebDAV directory URL when `latest` |
+
+### S3
+
+| Variable | Description |
+|---|---|
+| `DESKCAM_S3_BUCKET` | Bucket name |
+| `DESKCAM_S3_SELECTION` | `single` (default) or `latest` |
+| `DESKCAM_S3_KEY` | Exact object key when `single` |
+| `DESKCAM_S3_PREFIX` | Object prefix when `latest`; empty string for bucket root |
+| `DESKCAM_S3_REGION` | Region (optional) |
+| `DESKCAM_S3_ENDPOINT_URL` | Override endpoint for S3-compatible providers (optional) |
+| `AWS_ACCESS_KEY_ID` | AWS / S3-compatible access key |
+| `AWS_SECRET_ACCESS_KEY` | AWS / S3-compatible secret key |
+| `AWS_SESSION_TOKEN` | Session token (optional) |
+
+### FTPS
+
+| Variable | Default | Description |
+|---|---|---|
+| `DESKCAM_FTPS_HOST` | | Server hostname |
+| `DESKCAM_FTPS_PORT` | `21` | Server port |
+| `DESKCAM_FTPS_USERNAME` | | Login username |
+| `DESKCAM_FTPS_PASSWORD` | | Login password |
+| `DESKCAM_FTPS_SELECTION` | `single` | `single` or `latest` |
+| `DESKCAM_FTPS_PATH` | | Exact file path when `single` |
+| `DESKCAM_FTPS_DIRECTORY` | | Directory path when `latest` |
 
 ## Run
 
@@ -109,6 +134,30 @@ AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY \
 python3 cam_display.py
 ```
 
+FTPS fixed file:
+
+```bash
+DESKCAM_SOURCE=ftps \
+DESKCAM_FTPS_HOST=ftp.example.com \
+DESKCAM_FTPS_USERNAME=user \
+DESKCAM_FTPS_PASSWORD=secret \
+DESKCAM_FTPS_SELECTION=single \
+DESKCAM_FTPS_PATH=/cameras/lobby/current.jpg \
+python3 cam_display.py
+```
+
+FTPS newest file in a directory:
+
+```bash
+DESKCAM_SOURCE=ftps \
+DESKCAM_FTPS_HOST=ftp.example.com \
+DESKCAM_FTPS_USERNAME=user \
+DESKCAM_FTPS_PASSWORD=secret \
+DESKCAM_FTPS_SELECTION=latest \
+DESKCAM_FTPS_DIRECTORY=/cameras/lobby/ \
+python3 cam_display.py
+```
+
 ## Autostart (systemd, SSH-friendly)
 
 This repo includes a unit file template at `systemd/deskcam.service`.
@@ -129,7 +178,7 @@ Update these fields:
 - `User`, `Group`, `WorkingDirectory`
 - `/etc/deskcam.env` source settings and credentials
 
-Example `/etc/deskcam.env` for HTTP / WebDAV:
+Example `/etc/deskcam.env` for HTTP / WebDAV single file:
 
 ```bash
 DESKCAM_SOURCE=http
@@ -161,7 +210,7 @@ AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
 ```
 
-Example `/etc/deskcam.env` for newest object under a prefix:
+Example `/etc/deskcam.env` for newest S3 object under a prefix:
 
 ```bash
 DESKCAM_SOURCE=s3
@@ -173,7 +222,7 @@ AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
 ```
 
-Example `/etc/deskcam.env` for newest JPG/JPEG object from bucket root:
+Example `/etc/deskcam.env` for newest S3 object from bucket root:
 
 ```bash
 DESKCAM_SOURCE=s3
@@ -183,6 +232,30 @@ DESKCAM_S3_SELECTION=latest
 DESKCAM_S3_PREFIX=
 AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
+```
+
+Example `/etc/deskcam.env` for FTPS fixed file:
+
+```bash
+DESKCAM_SOURCE=ftps
+DESKCAM_FTPS_HOST=ftp.example.com
+DESKCAM_FTPS_USERNAME=user
+DESKCAM_FTPS_PASSWORD=secret
+DESKCAM_FTPS_SELECTION=single
+DESKCAM_FTPS_PATH=/cameras/lobby/current.jpg
+DESKCAM_INTERVAL=300
+```
+
+Example `/etc/deskcam.env` for newest FTPS file in a directory:
+
+```bash
+DESKCAM_SOURCE=ftps
+DESKCAM_FTPS_HOST=ftp.example.com
+DESKCAM_FTPS_USERNAME=user
+DESKCAM_FTPS_PASSWORD=secret
+DESKCAM_FTPS_SELECTION=latest
+DESKCAM_FTPS_DIRECTORY=/cameras/lobby/
+DESKCAM_INTERVAL=300
 ```
 
 2. Ensure the service user has required device access:
@@ -215,9 +288,12 @@ Notes:
 
 - The unit binds to `tty1` and displays with `fbi` on `/dev/fb0`.
 - `fbi` VT switching is not forced by default. If needed, set `DESKCAM_FBI_TTY=1` in the service environment.
-- WebDAV latest-directory mode uses `PROPFIND Depth: 1` and picks the newest non-directory `.jpg` or `.jpeg` item by `getlastmodified`.
-- S3 latest mode only considers `.jpg` and `.jpeg` objects and can search bucket root with `DESKCAM_S3_PREFIX=`.
-- S3 bucket name, key, prefix, and credentials should go in the env file, not in `ExecStart`.
+- WebDAV latest mode uses `PROPFIND Depth: 1` and picks the newest non-directory `.jpg`/`.jpeg` by `getlastmodified`.
+- S3 latest mode searches `.jpg`/`.jpeg` objects and supports bucket root with `DESKCAM_S3_PREFIX=`.
+- FTPS uses explicit TLS (`STARTTLS` on port 21) via Python's stdlib `ftplib` — no extra dependencies.
+- FTPS latest mode uses `MLSD` to retrieve modification times; your server must support it (most modern FTPS servers do).
+- FTPS single-file mode checks `MDTM` before downloading and skips the transfer if the file has not changed.
+- Credentials (S3 keys, FTPS password) should go in the env file, not in `ExecStart`.
 - If video output still fails, verify KMS is enabled in `/boot/firmware/config.txt` with `dtoverlay=vc4-kms-v3d`.
 
 ## Troubleshooting (SSH-only)
