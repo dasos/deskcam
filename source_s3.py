@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from models import Config, FetchedImage, is_jpeg_path
+from models import Config, FetchedImage, is_jpeg_path, is_valid_image
 
 
 def fetch(s3_client, cfg: Config) -> FetchedImage:
@@ -12,10 +12,10 @@ def fetch(s3_client, cfg: Config) -> FetchedImage:
             content = body.read()
         finally:
             body.close()
-        if content:
+        if is_valid_image(content):
             return FetchedImage(content=content, source_label=f"s3://{cfg.s3_bucket}/{key}")
     location = cfg.s3_key if cfg.s3_selection == "single" else cfg.s3_prefix or ""
-    raise RuntimeError(f"No non-empty image found in s3://{cfg.s3_bucket}/{location}")
+    raise RuntimeError(f"No valid image found in s3://{cfg.s3_bucket}/{location}")
 
 
 def create_client(cfg: Config):

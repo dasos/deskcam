@@ -24,7 +24,7 @@ import requests
 import source_ftps
 import source_http
 import source_s3
-from models import Config
+from models import Config, is_valid_image
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +355,8 @@ def run(cfg: Config) -> int:
                 else:
                     fetched = source_ftps.fetch(cfg)
 
-                if not fetched.content:
-                    raise RuntimeError(f"Empty image from {fetched.source_label}")
+                if not is_valid_image(fetched.content):
+                    raise RuntimeError(f"Invalid image from {fetched.source_label}")
                 image_hash = hashlib.sha256(fetched.content).hexdigest()
 
                 if image_hash != last_hash:

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import struct
+import warnings
 from dataclasses import dataclass
+from io import BytesIO
+
+from PIL import Image
 
 
 @dataclass
@@ -38,3 +43,20 @@ class FetchedImage:
 def is_jpeg_path(path: str) -> bool:
     lower = path.lower()
     return lower.endswith(".jpg") or lower.endswith(".jpeg")
+
+
+def is_valid_image(content: bytes) -> bool:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            # verify() checks file structure; reopening and loading checks pixel decoding.
+            with Image.open(BytesIO(content)) as image:
+                image.verify()
+            with Image.open(BytesIO(content)) as image:
+                image.load()
+    except (
+        OSError, ValueError, SyntaxError, EOFError, struct.error,
+        Image.DecompressionBombError, Image.DecompressionBombWarning,
+    ):
+        return False
+    return True

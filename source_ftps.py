@@ -3,7 +3,7 @@ from __future__ import annotations
 import ftplib
 import io
 
-from models import Config, FetchedImage, is_jpeg_path
+from models import Config, FetchedImage, is_jpeg_path, is_valid_image
 
 # Cached state for single-file mode — persists across poll cycles to avoid
 # re-downloading when the file hasn't changed.
@@ -53,8 +53,8 @@ def _fetch_single(cfg: Config) -> FetchedImage:
         content=buf.getvalue(),
         source_label=f"ftps://{cfg.ftps_host}/{cfg.ftps_path.lstrip('/')}",
     )
-    if not image.content:
-        raise RuntimeError(f"Empty image from {image.source_label}")
+    if not is_valid_image(image.content):
+        raise RuntimeError(f"Invalid image from {image.source_label}")
     _last_mtime = mtime
     _cached_image = image
     return image
@@ -81,11 +81,11 @@ def _fetch_latest(cfg: Config) -> FetchedImage:
             buf = io.BytesIO()
             ftp.retrbinary(f"RETR {path}", buf.write)
             content = buf.getvalue()
-            if content:
+            if is_valid_image(content):
                 return FetchedImage(
                     content=content,
                     source_label=f"ftps://{cfg.ftps_host}/{path.lstrip('/')}",
                 )
-        raise RuntimeError(f"No non-empty JPG/JPEG files found in FTPS directory {directory}")
+        raise RuntimeError(f"No valid JPG/JPEG files found in FTPS directory {directory}")
     finally:
         _quit(ftp)

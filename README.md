@@ -13,6 +13,9 @@ cd /home/pi/deskcam
 python3 -m pip install -r requirements.txt
 ```
 
+After upgrading an existing installation, rerun the dependency installation
+command to install Pillow before restarting the service.
+
 ## Configuration
 
 Three source backends are supported:
@@ -21,9 +24,11 @@ Three source backends are supported:
 - `s3`: fetch either a fixed object key or the newest `.jpg`/`.jpeg` object under a prefix
 - `ftps`: fetch either a fixed file or the newest `.jpg`/`.jpeg` file in a directory (explicit TLS on port 21); single-file mode skips the download when the file has not changed
 
-Empty images are ignored. In latest mode, the newest non-empty image is selected;
-if no usable image is available, the current display is left unchanged and the
-source is checked again on the next poll.
+Images are checked with Pillow before display. Empty, corrupt, and otherwise
+undecodable images are ignored. In latest mode, the newest valid image is
+selected; if none is available, the current display is left unchanged and the
+source is checked again on the next poll. Pillow and `fbi` may support different
+formats, so successful validation does not guarantee `fbi` can display an image.
 
 Configuration can come from CLI flags, environment variables, or an env file.
 

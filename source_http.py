@@ -6,7 +6,7 @@ from xml.etree import ElementTree
 
 import requests
 
-from models import Config, FetchedImage, is_jpeg_path
+from models import Config, FetchedImage, is_jpeg_path, is_valid_image
 
 
 def fetch(session: requests.Session, cfg: Config) -> FetchedImage:
@@ -18,8 +18,8 @@ def fetch(session: requests.Session, cfg: Config) -> FetchedImage:
 def _fetch_single(session: requests.Session, cfg: Config) -> FetchedImage:
     response = session.get(cfg.http_url, timeout=cfg.timeout_seconds)
     response.raise_for_status()
-    if not response.content:
-        raise RuntimeError(f"Empty image from {cfg.http_url}")
+    if not is_valid_image(response.content):
+        raise RuntimeError(f"Invalid image from {cfg.http_url}")
     return FetchedImage(content=response.content, source_label=cfg.http_url)
 
 
@@ -27,10 +27,10 @@ def _fetch_latest(session: requests.Session, cfg: Config) -> FetchedImage:
     for url in _find_latest_urls(session, cfg):
         response = session.get(url, timeout=cfg.timeout_seconds)
         response.raise_for_status()
-        if response.content:
+        if is_valid_image(response.content):
             return FetchedImage(content=response.content, source_label=url)
     raise RuntimeError(
-        f"No non-empty JPG/JPEG files found in WebDAV directory {cfg.http_directory_url}"
+        f"No valid JPG/JPEG files found in WebDAV directory {cfg.http_directory_url}"
     )
 
 

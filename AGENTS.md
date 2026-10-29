@@ -7,11 +7,11 @@
 
 ## File Structure
 - `cam_display.py` — entry point; env/arg parsing, fbi display logic, main poll loop
-- `models.py` — shared `Config` and `FetchedImage` dataclasses, `is_jpeg_path` helper
+- `models.py` — shared `Config` and `FetchedImage` dataclasses, image path and validation helpers
 - `source_http.py` — HTTP / WebDAV fetch backend; exposes `fetch(session, cfg)`
 - `source_s3.py` — S3 fetch backend; exposes `fetch(s3_client, cfg)` and `create_client(cfg)`
 - `source_ftps.py` — FTPS fetch backend; exposes `fetch(cfg)` (manages its own connection per poll)
-- `test_source_empty.py` — regression tests for empty-image handling across backends
+- `test_source_empty.py` — regression tests for invalid-image handling across backends
 
 ## What Works (Confirmed)
 - Running as a `systemd` service bound to `tty1`.
@@ -29,7 +29,7 @@
 - **HTTP**: uses a persistent `requests.Session` created once at startup.
 - **S3**: uses a persistent boto3 client created once at startup; `boto3` is imported lazily inside `create_client()` so it is not loaded when using other backends.
 - **FTPS**: opens a fresh `ftplib.FTP_TLS` connection each poll cycle to avoid timeout issues with long intervals. Single-file mode caches the last `MDTM` timestamp and skips the download when unchanged. Requires explicit TLS (STARTTLS, port 21); uses `MLSD` for directory listings.
-- Empty images are ignored. Latest mode selects the newest non-empty image; if none is available, the current display remains unchanged until the next poll.
+- Images are validated with Pillow before display. Latest mode selects the newest decodable image; if none is available, the current display remains unchanged until the next poll. FTPS single-file mode must not cache invalid images.
 
 ## Service Guidance
 - Use the template at `systemd/deskcam.service`.

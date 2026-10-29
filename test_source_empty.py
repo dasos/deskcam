@@ -5,11 +5,24 @@ from types import SimpleNamespace
 from unittest import mock
 from xml.etree import ElementTree
 
+from PIL import Image
+
 import cam_display
 import source_ftps
 import source_http
 import source_s3
-from models import FetchedImage
+from models import FetchedImage, is_valid_image
+
+
+def make_image(image_format):
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(output, format=image_format)
+    return output.getvalue()
+
+
+JPEG = make_image("JPEG")
+PNG = make_image("PNG")
+TRUNCATED_JPEG = JPEG[:-2]
 
 
 class EmptySourceTests(unittest.TestCase):
@@ -105,11 +118,11 @@ class EmptySourceTests(unittest.TestCase):
         for backend in ("http", "s3", "ftps"):
             with self.subTest(backend=backend):
                 fetch, downloads = self.make_source(
-                    backend, [("old.jpg", 1, 5), ("new.jpg", 2, 0)],
-                    {"old.jpg": b"image", "new.jpg": b""},
+                    backend, [("old.jpg", 1, len(JPEG)), ("new.jpg", 2, 0)],
+                    {"old.jpg": JPEG, "new.jpg": b""},
                 )
                 image = fetch()
-                self.assertEqual(image.content, b"image")
+                self.assertEqual(image.content, JPEG)
                 self.assertTrue(image.source_label.endswith("/old.jpg"))
                 self.assertEqual(downloads, ["old.jpg"])
 
@@ -118,10 +131,10 @@ class EmptySourceTests(unittest.TestCase):
             with self.subTest(backend=backend):
                 fetch, downloads = self.make_source(
                     backend, [("old.jpg", 1, None), ("new.jpg", 2, None)],
-                    {"old.jpg": b"image", "new.jpg": b""},
+                    {"old.jpg": JPEG, "new.jpg": b""},
                 )
                 image = fetch()
-                self.assertEqual(image.content, b"image")
+                self.assertEqual(image.content, JPEG)
                 self.assertTrue(image.source_label.endswith("/old.jpg"))
                 self.assertEqual(downloads, ["new.jpg", "old.jpg"])
 
@@ -129,11 +142,11 @@ class EmptySourceTests(unittest.TestCase):
         for backend in ("http", "s3", "ftps"):
             with self.subTest(backend=backend):
                 fetch, downloads = self.make_source(
-                    backend, [("old.jpg", 1, 5), ("new.jpg", 2, 5)],
-                    {"old.jpg": b"image", "new.jpg": b""},
+                    backend, [("old.jpg", 1, len(JPEG)), ("new.jpg", 2, 5)],
+                    {"old.jpg": JPEG, "new.jpg": b""},
                 )
                 image = fetch()
-                self.assertEqual(image.content, b"image")
+                self.assertEqual(image.content, JPEG)
                 self.assertTrue(image.source_label.endswith("/old.jpg"))
                 self.assertEqual(downloads, ["new.jpg", "old.jpg"])
 
@@ -149,6 +162,30 @@ class EmptySourceTests(unittest.TestCase):
                         fetch()
                     self.assertEqual(downloads, [] if size == 0 else ["new.jpg", "old.jpg"])
 
+    def test_latest_falls_back_from_invalid_image(self):
+        for backend in ("http", "s3", "ftps"):
+            for invalid in (b"not an image", TRUNCATED_JPEG):
+                with self.subTest(backend=backend, invalid=invalid[:16]):
+                    fetch, downloads = self.make_source(
+                        backend, [("old.jpg", 1, len(JPEG)), ("new.jpg", 2, len(invalid))],
+                        {"old.jpg": JPEG, "new.jpg": invalid},
+                    )
+                    image = fetch()
+                    self.assertEqual(image.content, JPEG)
+                    self.assertTrue(image.source_label.endswith("/old.jpg"))
+                    self.assertEqual(downloads, ["new.jpg", "old.jpg"])
+
+    def test_latest_all_invalid_raises(self):
+        for backend in ("http", "s3", "ftps"):
+            with self.subTest(backend=backend):
+                fetch, downloads = self.make_source(
+                    backend, [("old.jpg", 1, len(TRUNCATED_JPEG)), ("new.jpg", 2, 12)],
+                    {"old.jpg": TRUNCATED_JPEG, "new.jpg": b"not an image"},
+                )
+                with self.assertRaises(RuntimeError):
+                    fetch()
+                self.assertEqual(downloads, ["new.jpg", "old.jpg"])
+
     def test_single_empty_raises(self):
         for backend in ("http", "s3", "ftps"):
             with self.subTest(backend=backend):
@@ -159,26 +196,107 @@ class EmptySourceTests(unittest.TestCase):
                     fetch()
                 self.assertEqual(downloads, ["fixed.jpg"])
 
+    def test_single_invalid_raises(self):
+        for backend in ("http", "s3", "ftps"):
+            with self.subTest(backend=backend):
+                fetch, downloads = self.make_source(
+                    backend, [], {"fixed.jpg": b"not an image"}, selection="single",
+                )
+                with self.assertRaises(RuntimeError):
+                    fetch()
+                self.assertEqual(downloads, ["fixed.jpg"])
+
+    def test_single_valid_jpeg_is_returned(self):
+        for backend in ("http", "s3", "ftps"):
+            with self.subTest(backend=backend):
+                fetch, downloads = self.make_source(
+                    backend, [], {"fixed.jpg": JPEG}, selection="single",
+                )
+                image = fetch()
+                self.assertEqual(image.content, JPEG)
+                self.assertTrue(image.source_label.endswith("/fixed.jpg"))
+                self.assertEqual(downloads, ["fixed.jpg"])
+
+    def test_single_valid_png_is_returned(self):
+        for backend in ("http", "s3", "ftps"):
+            with self.subTest(backend=backend):
+                fetch, downloads = self.make_source(
+                    backend, [], {"fixed.jpg": PNG}, selection="single",
+                )
+                image = fetch()
+                self.assertEqual(image.content, PNG)
+                self.assertTrue(image.source_label.endswith("/fixed.jpg"))
+                self.assertEqual(downloads, ["fixed.jpg"])
+
     def test_ftps_single_retries_empty_content_with_same_mdtm(self):
         contents = {"fixed.jpg": b""}
         fetch, downloads = self.make_source("ftps", [], contents, selection="single")
         with self.assertRaises(RuntimeError):
             fetch()
-        contents["fixed.jpg"] = b"image"
+        contents["fixed.jpg"] = JPEG
         image = fetch()
-        self.assertEqual(image.content, b"image")
+        self.assertEqual(image.content, JPEG)
         self.assertTrue(image.source_label.endswith("/fixed.jpg"))
         self.assertEqual(downloads, ["fixed.jpg", "fixed.jpg"])
-        self.assertEqual(fetch().content, b"image")
+        self.assertEqual(fetch().content, JPEG)
+        self.assertEqual(downloads, ["fixed.jpg", "fixed.jpg"])
+
+    def test_ftps_single_retries_invalid_content_with_same_mdtm(self):
+        contents = {"fixed.jpg": TRUNCATED_JPEG}
+        fetch, downloads = self.make_source("ftps", [], contents, selection="single")
+        with self.assertRaises(RuntimeError):
+            fetch()
+        contents["fixed.jpg"] = JPEG
+        image = fetch()
+        self.assertEqual(image.content, JPEG)
+        self.assertTrue(image.source_label.endswith("/fixed.jpg"))
+        self.assertEqual(downloads, ["fixed.jpg", "fixed.jpg"])
+        self.assertEqual(fetch().content, JPEG)
         self.assertEqual(downloads, ["fixed.jpg", "fixed.jpg"])
 
     def test_run_rejects_empty_content_before_display(self):
+        self.assert_run_rejects_content(b"")
+
+    def test_run_rejects_invalid_content_before_display(self):
+        for invalid in (b"not an image", TRUNCATED_JPEG):
+            with self.subTest(invalid=invalid[:16]):
+                self.assert_run_rejects_content(invalid)
+
+    def test_decompression_bomb_is_rejected(self):
+        for limit in (40, 25):
+            with self.subTest(limit=limit), mock.patch.object(Image, "MAX_IMAGE_PIXELS", limit):
+                self.assertFalse(is_valid_image(JPEG))
+
+    def test_run_keeps_current_display_when_next_image_is_invalid(self):
+        cfg = SimpleNamespace(source_type="http", interval_seconds=5)
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        with (
+            mock.patch.object(cam_display, "ensure_fbi_available"),
+            mock.patch.object(cam_display.os, "makedirs"),
+            mock.patch.object(cam_display.requests, "Session"),
+            mock.patch.object(source_http, "fetch", side_effect=[
+                FetchedImage(JPEG, "valid.jpg"), FetchedImage(b"broken", "invalid.jpg"),
+            ]),
+            mock.patch.object(cam_display, "write_image") as write_image,
+            mock.patch.object(cam_display, "start_fbi", return_value=proc) as start_fbi,
+            mock.patch.object(cam_display, "stop_fbi") as stop_fbi,
+            mock.patch.object(cam_display.time, "sleep"),
+            mock.patch.object(cam_display.time, "monotonic", side_effect=[0, 5, KeyboardInterrupt]),
+            mock.patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(cam_display.run(cfg), 0)
+        write_image.assert_called_once()
+        start_fbi.assert_called_once()
+        self.assertEqual(stop_fbi.call_args_list, [mock.call(None), mock.call(proc)])
+
+    def assert_run_rejects_content(self, content):
         cfg = SimpleNamespace(source_type="http", interval_seconds=5)
         with (
             mock.patch.object(cam_display, "ensure_fbi_available"),
             mock.patch.object(cam_display.os, "makedirs"),
             mock.patch.object(cam_display.requests, "Session"),
-            mock.patch.object(source_http, "fetch", return_value=FetchedImage(b"", "empty.jpg")),
+            mock.patch.object(source_http, "fetch", return_value=FetchedImage(content, "invalid.jpg")),
             mock.patch.object(cam_display, "write_image") as write_image,
             mock.patch.object(cam_display, "start_fbi") as start_fbi,
             mock.patch.object(cam_display.time, "sleep", side_effect=KeyboardInterrupt),
