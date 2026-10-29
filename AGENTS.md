@@ -11,6 +11,7 @@
 - `source_http.py` — HTTP / WebDAV fetch backend; exposes `fetch(session, cfg)`
 - `source_s3.py` — S3 fetch backend; exposes `fetch(s3_client, cfg)` and `create_client(cfg)`
 - `source_ftps.py` — FTPS fetch backend; exposes `fetch(cfg)` (manages its own connection per poll)
+- `test_source_empty.py` — regression tests for empty-image handling across backends
 
 ## What Works (Confirmed)
 - Running as a `systemd` service bound to `tty1`.
@@ -28,6 +29,7 @@
 - **HTTP**: uses a persistent `requests.Session` created once at startup.
 - **S3**: uses a persistent boto3 client created once at startup; `boto3` is imported lazily inside `create_client()` so it is not loaded when using other backends.
 - **FTPS**: opens a fresh `ftplib.FTP_TLS` connection each poll cycle to avoid timeout issues with long intervals. Single-file mode caches the last `MDTM` timestamp and skips the download when unchanged. Requires explicit TLS (STARTTLS, port 21); uses `MLSD` for directory listings.
+- Empty images are ignored. Latest mode selects the newest non-empty image; if none is available, the current display remains unchanged until the next poll.
 
 ## Service Guidance
 - Use the template at `systemd/deskcam.service`.
@@ -43,6 +45,7 @@
   - Default behavior does not force VT switching.
   - Set only when explicit `fbi -T <n>` behavior is required and permitted.
 - `--transition` support was intentionally removed because the `fbi` backend does not provide clean frame-transition primitives.
+- If video output fails, verify the KMS overlay in `/boot/firmware/config.txt`: `dtoverlay=vc4-kms-v3d`.
 
 ## Deployment Checklist
 1. `sudo apt install -y python3 python3-pip fbi`
@@ -68,4 +71,5 @@
 - Keep implementation simple and operationally robust for headless SSH + systemd environments.
 - Prefer incremental, verifiable changes with clear journald logs.
 - Avoid reintroducing SDL/pygame display code unless there is a verified hardware-specific need and test evidence.
-- Each source backend lives in its own `source_*.py` file and exposes a `fetch()` entry point. Add new backends by creating a new `source_*.py` and wiring it into `parse_args()` and the dispatch in `run()` in `cam_display.py`.
+- Each source backend lives in its own `source_*.py` file and exposes a `fetch()` entry point returning `FetchedImage`. To add one, create the backend file, add fields to `Config` in `models.py`, add arguments and validation to `parse_args()`, and wire it into the dispatch in `run()` in `cam_display.py`.
+- Run regression tests with `python3 -B -m unittest discover -v`.
