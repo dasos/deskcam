@@ -355,6 +355,8 @@ def run(cfg: Config) -> int:
                 else:
                     fetched = source_ftps.fetch(cfg)
 
+                if not fetched.content:
+                    raise RuntimeError(f"Empty image from {fetched.source_label}")
                 image_hash = hashlib.sha256(fetched.content).hexdigest()
 
                 if image_hash != last_hash:

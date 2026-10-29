@@ -18,14 +18,20 @@ def fetch(session: requests.Session, cfg: Config) -> FetchedImage:
 def _fetch_single(session: requests.Session, cfg: Config) -> FetchedImage:
     response = session.get(cfg.http_url, timeout=cfg.timeout_seconds)
     response.raise_for_status()
+    if not response.content:
+        raise RuntimeError(f"Empty image from {cfg.http_url}")
     return FetchedImage(content=response.content, source_label=cfg.http_url)
 
 
 def _fetch_latest(session: requests.Session, cfg: Config) -> FetchedImage:
-    url = _find_latest_url(session, cfg)
-    response = session.get(url, timeout=cfg.timeout_seconds)
-    response.raise_for_status()
-    return FetchedImage(content=response.content, source_label=url)
+    for url in _find_latest_urls(session, cfg):
+        response = session.get(url, timeout=cfg.timeout_seconds)
+        response.raise_for_status()
+        if response.content:
+            return FetchedImage(content=response.content, source_label=url)
+    raise RuntimeError(
+        f"No non-empty JPG/JPEG files found in WebDAV directory {cfg.http_directory_url}"
+    )
 
 
 def _normalize_url(url: str) -> str:
@@ -34,11 +40,12 @@ def _normalize_url(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}{path}"
 
 
-def _find_latest_url(session: requests.Session, cfg: Config) -> str:
+def _find_latest_urls(session: requests.Session, cfg: Config) -> list[str]:
     body = """<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:">
   <d:prop>
     <d:getlastmodified />
+    <d:getcontentlength />
     <d:resourcetype />
   </d:prop>
 </d:propfind>
@@ -61,7 +68,7 @@ def _find_latest_url(session: requests.Session, cfg: Config) -> str:
 
     namespace = {"d": "DAV:"}
     directory_url = _normalize_url(cfg.http_directory_url)
-    latest_entry: tuple[object, str] | None = None
+    entries = []
 
     for entry in root.findall("d:response", namespace):
         href = entry.findtext("d:href", namespaces=namespace)
@@ -82,6 +89,10 @@ def _find_latest_url(session: requests.Session, cfg: Config) -> str:
         if resource_type is not None and resource_type.find("d:collection", namespace) is not None:
             continue
 
+        size = prop.findtext("d:getcontentlength", namespaces=namespace)
+        if size and size.strip().isdigit() and int(size) == 0:
+            continue
+
         last_modified = prop.findtext("d:getlastmodified", namespaces=namespace)
         if not last_modified:
             continue
@@ -93,11 +104,7 @@ def _find_latest_url(session: requests.Session, cfg: Config) -> str:
                 f"Invalid getlastmodified value for {file_url}: {last_modified}"
             ) from exc
 
-        if latest_entry is None or modified_at > latest_entry[0]:
-            latest_entry = (modified_at, file_url)
+        entries.append((modified_at, file_url))
 
-    if latest_entry is None:
-        raise RuntimeError(
-            f"No JPG/JPEG files found in WebDAV directory {cfg.http_directory_url}"
-        )
-    return latest_entry[1]
+    entries.sort(key=lambda entry: entry[0], reverse=True)
+    return [url for _, url in entries]

@@ -53,6 +53,8 @@ def _fetch_single(cfg: Config) -> FetchedImage:
         content=buf.getvalue(),
         source_label=f"ftps://{cfg.ftps_host}/{cfg.ftps_path.lstrip('/')}",
     )
+    if not image.content:
+        raise RuntimeError(f"Empty image from {image.source_label}")
     _last_mtime = mtime
     _cached_image = image
     return image
@@ -63,27 +65,27 @@ def _fetch_latest(cfg: Config) -> FetchedImage:
 
     ftp = _connect(cfg)
     try:
-        latest_name: str | None = None
-        latest_mtime: str | None = None
+        entries = []
 
-        for name, facts in ftp.mlsd(directory, facts=["type", "modify"]):
+        for name, facts in ftp.mlsd(directory, facts=["type", "modify", "size"]):
             if facts.get("type") != "file" or not is_jpeg_path(name):
                 continue
-            mtime = facts.get("modify", "")
-            if latest_mtime is None or mtime > latest_mtime:
-                latest_mtime = mtime
-                latest_name = name
+            size = facts.get("size", "").strip()
+            if size.isdigit() and int(size) == 0:
+                continue
+            entries.append((facts.get("modify", ""), name))
 
-        if latest_name is None:
-            raise RuntimeError(f"No JPG/JPEG files found in FTPS directory {directory}")
-
-        path = f"{directory.rstrip('/')}/{latest_name}"
-        buf = io.BytesIO()
-        ftp.retrbinary(f"RETR {path}", buf.write)
+        entries.sort(key=lambda entry: entry[0], reverse=True)
+        for _, name in entries:
+            path = f"{directory.rstrip('/')}/{name}"
+            buf = io.BytesIO()
+            ftp.retrbinary(f"RETR {path}", buf.write)
+            content = buf.getvalue()
+            if content:
+                return FetchedImage(
+                    content=content,
+                    source_label=f"ftps://{cfg.ftps_host}/{path.lstrip('/')}",
+                )
+        raise RuntimeError(f"No non-empty JPG/JPEG files found in FTPS directory {directory}")
     finally:
         _quit(ftp)
-
-    return FetchedImage(
-        content=buf.getvalue(),
-        source_label=f"ftps://{cfg.ftps_host}/{path.lstrip('/')}",
-    )

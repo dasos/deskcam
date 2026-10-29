@@ -21,6 +21,10 @@ Three source backends are supported:
 - `s3`: fetch either a fixed object key or the newest `.jpg`/`.jpeg` object under a prefix
 - `ftps`: fetch either a fixed file or the newest `.jpg`/`.jpeg` file in a directory (explicit TLS on port 21); single-file mode skips the download when the file has not changed
 
+Empty images are ignored. In latest mode, the newest non-empty image is selected;
+if no usable image is available, the current display is left unchanged and the
+source is checked again on the next poll.
+
 Configuration can come from CLI flags, environment variables, or an env file.
 
 For local/manual runs, a repo-local `.env` file is fine and is already ignored by git.
